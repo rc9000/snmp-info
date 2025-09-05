@@ -10,13 +10,13 @@ on:
         description: 'With build and test debug'
         required: false
         default:  false
-  push:
-    branches:
-      - master
-    tags:
-      - '[0-9].[0-9][0-9][0-9]?[0-9]?[0-9]?[0-9]?'
-  pull_request:
-    types: [opened, synchronize, reopened]
+  # push:
+  #   branches:
+  #     - master
+  #   tags:
+  #     - '[0-9].[0-9][0-9][0-9]?[0-9]?[0-9]?[0-9]?'
+  # pull_request:
+  #   types: [opened, synchronize, reopened]
 jobs:
   test_snmp_info:
     name: Test and CPAN Upload
@@ -46,6 +46,15 @@ jobs:
     - name: Fix owner of checkout
       run: chown -R netdisco:netdisco /github/workspace/snmp-info/snmp-info
 
+    - name: Download latest netdisco-mibs
+      working-directory: /home/netdisco/netdisco-mibs
+      run: |
+        rm -rf /home/netdisco/netdisco-mibs/* && 
+        curl -sL https://api.github.com/repos/netdisco/netdisco-mibs/releases/latest |
+          grep browser_download_url | xargs printf "curl -sL %s\n" | tail -1 |
+          sh | tar --strip-components=1 -zxf - &&
+        chown -R netdisco:netdisco /home/netdisco/netdisco-mibs
+
     - name: Install Perl deps
       run: |
         sudo -u netdisco /home/netdisco/bin/localenv cpanm --notest Hook::LexWrap Test::Class::Most Test::Distribution Test::MockObject::Extends PPI Class::ISA Module::Info File::Slurp Test::Perl::Critic Test::Spelling CPAN::Uploader
@@ -57,68 +66,4 @@ jobs:
         sudo -u netdisco /home/netdisco/bin/localenv ./Build test --test_files t/ --test_files xt/
       continue-on-error: true
 
-    - name: IRC test failure notification
-      if: (steps.build_and_run_tests.outcome == 'failure') && (github.event_name != 'workflow_dispatch') && (github.event_name != 'pull_request')
-      uses: Gottox/irc-message-action@v2
-      with:
-        channel: '#netdisco'
-        nickname: github-actions
-        message: |-
-          🤖 ${{ github.actor }} pushed to ${{ env.GH_REF_SHORT }}: https://github.com/${{ github.repository }}/commit/${{ github.sha }}
-          😭 TESTS have FAILED! 👀 https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-    - name: IRC test success notification
-      if: (steps.build_and_run_tests.outcome == 'success') && github.event.inputs.success_irc_squawk
-      uses: Gottox/irc-message-action@v2
-      with:
-        channel: '#netdisco'
-        nickname: github-actions
-        message: |-
-          🤖 ${{ github.actor }} pushed to ${{ env.GH_REF_SHORT }}: https://github.com/${{ github.repository }}/commit/${{ github.sha }} (tests PASSED 🎉)
-
-    - name: Make release
-      if: steps.build_and_run_tests.outcome == 'success'
-      run: |
-        sudo -u netdisco /home/netdisco/bin/localenv rm ./MANIFEST
-        sudo -u netdisco /home/netdisco/bin/localenv ./Build manifest
-        sudo -u netdisco /home/netdisco/bin/localenv ./Build distmeta
-        sudo -u netdisco /home/netdisco/bin/localenv ./Build dist
-
-    - name: Upload to CPAN
-      id: upload_to_cpan
-      if: success() && startsWith(github.ref, 'refs/tags/')
-      env:
-        PAUSE_USERNAME: ${{ secrets.PAUSE_USERNAME }}
-        PAUSE_PASSWORD: ${{ secrets.PAUSE_PASSWORD }}
-      run: |
-        bash -c 'RELEASENAME=(SNMP-Info-*.tar.gz) && ! curl -LI --fail https://cpan.metacpan.org/authors/id/O/OL/OLIVER/${RELEASENAME}'
-        sudo -u netdisco /home/netdisco/bin/localenv cpan-upload -u '${{ env.PAUSE_USERNAME }}' -p '${{ env.PAUSE_PASSWORD }}' SNMP-Info-*.tar.gz
-      continue-on-error: true
-
-    - name: IRC upload failure notification
-      if: steps.upload_to_cpan.outcome == 'failure'
-      uses: Gottox/irc-message-action@v2
-      with:
-        channel: '#netdisco'
-        nickname: github-actions
-        message: |-
-          🤖 Failed to upload SNMP::Info release ${{ env.GH_REF_SHORT }} to CPAN! 😭
-          👀 https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-    - name: IRC upload success notification
-      if: steps.upload_to_cpan.outcome == 'success'
-      uses: Gottox/irc-message-action@v2
-      with:
-        channel: '#netdisco'
-        nickname: github-actions
-        message: |-
-          🤖 Uploaded SNMP::Info release ${{ env.GH_REF_SHORT }} to CPAN 🎉
-
-    - name: Setup tmate session
-      uses: mxschmitt/action-tmate@v3
-      if: always() && github.event.inputs.debug_test_enabled
-      with:
-        sudo: true
-
-    - name: Preserve status from tests
-      if: always() && (steps.build_and_run_tests.outcome == 'failure')
-      run: exit 1
 
